@@ -1,174 +1,134 @@
 # RaiLife
 
-Personal life-data normalization pipelines.
+RaiLife is a small personal project I started to make sense of the bits of data I collect in everyday life.
 
-## Apple Health Sleep
+It began with a fairly simple problem: I had sleep data from Apple Health, activity data from Health Auto Export, daily notes in Notion, and weekly reports that I was putting together separately. I wanted one place where I could clean up that data and turn it into something I could actually use.
 
-The sleep pipeline reads Apple Health sleep sample text files exported by an iPhone Shortcut, copies them into immutable raw snapshots, and writes normalized JSON for later Notion and LaTeX use.
+So this repository is slowly becoming that place.
 
-Source files are never modified.
+I’m also using RaiLife as a way to learn Python, Git, and automation through something I genuinely need, rather than through isolated exercises. I build it with the help of Codex, and I’m still figuring things out as the project grows.
 
-Canonical daily sleep files follow the local calendar date of each sleep session's wake time. Rolling-window exports may contain sessions from multiple dates; the normalizer partitions sessions by that end date, deduplicates samples already present in canonical daily JSON, and writes one `data/normalized/sleep/YYYY-MM-DD.json` file per affected date.
+## What it does
 
-Supported input formats:
+At the moment, RaiLife can process sleep and activity data, keep selected ChatGPT excerpts, generate weekly aggregates and figures, and sync some of the results to Notion.
 
-```text
-Value | Start | End
-Source | Value | Start | End
-```
-
-Example:
+The general flow looks like this:
 
 ```text
-Core | 30 Aug 2026 at 05:58 | 30 Aug 2026 at 06:13
-Apple Watch | Core | 30 Aug 2026 at 05:58 | 30 Aug 2026 at 06:13
+raw data
+   ↓
+normalization
+   ↓
+daily JSON
+   ↓
+weekly aggregation
+   ↓
+Notion / figures / weekly reports
 ```
 
-Run from this directory:
+The real personal data is kept locally and is not included in this repository.
 
-```sh
-python -m railife.pipelines.normalize_sleep \
-  --source-dir "$HOME/Library/Mobile Documents/com~apple~CloudDocs/RaiHealth/sleep" \
-  --timezone Asia/Shanghai \
-  --session-gap-minutes 90
+## Sleep
+
+Sleep data comes from Apple Health exports created with an iPhone Shortcut.
+
+The normalizer keeps a copy of the raw export, parses individual sleep samples, groups them into sessions, and writes one normalized JSON file for each day. A sleep session belongs to the calendar date on which it ends.
+
+It also handles overlapping exports, so importing the same sleep samples again does not create duplicates.
+
+Normalized files follow this structure:
+
+```text
+data/normalized/sleep/YYYY-MM-DD.json
 ```
 
-Outputs:
-
-- `data/raw/apple_health/sleep/`: copied raw snapshots named with a SHA-256 prefix
-- `data/manifests/raw_files.json`: import manifest with hashes and source metadata
-- `data/normalized/sleep/YYYY-MM-DD.json`: normalized daily sleep JSON
-
-Generate a Sunday-to-Saturday weekly aggregate from daily normalized JSON:
+Weekly sleep data can then be generated from the daily files:
 
 ```sh
 PYTHONPATH=src python3 -m railife.pipelines.aggregate_sleep_week \
   --week-label "Week 01" \
-  --start-date 2026-08-30 \
-  --end-date 2026-09-05
+  --start-date YYYY-MM-DD \
+  --end-date YYYY-MM-DD
 ```
 
-Weekly output is written to `data/aggregates/sleep/` and keeps missing dates explicit.
+Missing days are kept explicit rather than silently disappearing from the week.
 
-## Health Auto Export Activity
+## Activity
 
-The activity pipeline reads step and workout JSON files manually exported from Health Auto Export. Source files are copied into immutable raw snapshots before parsing.
+Activity data currently comes from Health Auto Export.
 
-Step and workout exports stay separate in the raw layer:
-
-```text
-data/raw/health_auto_export/step/
-data/raw/health_auto_export/workout/
-```
-
-Canonical daily activity files are written to:
+Steps and workouts are imported separately and normalized into daily activity files:
 
 ```text
 data/normalized/activity/YYYY-MM-DD.json
 ```
 
-Schema version: `activity.daily.v1`
-
-Daily activity records contain nullable daily steps and zero or more workouts. Daily steps come from the Health Auto Export `step_count` daily aggregate; the pipeline does not recompute the daily total from workout or minute-level samples.
-
-Workout detail time series are normalized separately to keep daily files compact:
+Workout time series are stored separately so the daily files stay reasonably small:
 
 ```text
 data/normalized/activity/workout_details/YYYY-MM-DD/{workout_id}.json
 ```
 
-Supported detail series include:
+The activity pipeline currently handles daily steps, workouts, heart-rate data, energy, distance, and some other workout details.
 
-- `heartRateData`
-- `heartRateRecovery`
-- `activeEnergy`
-- `basalEnergy`
-- `stepCount`
-- `walkingAndRunningDistance`
+Repeated imports are deduplicated when they contain the same data. If two imports disagree about something that should have a single value, the pipeline raises an error instead of quietly choosing one.
 
-Energy values preserve the original source value and unit. When Health Auto Export reports `kJ`, normalized kcal is computed deterministically with `kcal = kJ / 4.184`. Unknown energy units are preserved as source values and are not silently converted.
+## ChatGPT excerpts
 
-The v1 merge policy is strict:
+I sometimes want to keep a small part of a ChatGPT conversation together with the rest of my daily records.
 
-- identical re-exports are idempotent
-- identical daily step values from multiple exports are accepted
-- conflicting daily step values for the same date raise an error
-- duplicate workouts with the same stable workout ID and identical raw workout content are deduplicated
-- conflicting versions of the same workout ID raise an error
+RaiLife has a simple format for saving excerpts that I explicitly choose. It is not intended to archive my full ChatGPT history.
 
-Run from this directory:
-
-```sh
-PYTHONPATH=src python3 -m railife.pipelines.normalize_activity \
-  --step-source-dir "$HOME/Library/Mobile Documents/com~apple~CloudDocs/RaiHealth/step" \
-  --workout-source-dir "$HOME/Library/Mobile Documents/com~apple~CloudDocs/RaiHealth/workout"
-```
-
-Outputs:
-
-- `data/raw/health_auto_export/step/`: copied raw step snapshots named with a SHA-256 prefix
-- `data/raw/health_auto_export/workout/`: copied raw workout snapshots named with a SHA-256 prefix
-- `data/manifests/raw_files.json`: import manifest with hashes, exporter, provider, and source metadata
-- `data/normalized/activity/YYYY-MM-DD.json`: compact normalized daily activity JSON
-- `data/normalized/activity/workout_details/YYYY-MM-DD/{workout_id}.json`: normalized workout detail series
-
-## ChatGPT Excerpts
-
-RaiLife can keep small ChatGPT conversation excerpts that you explicitly choose to save. This is not a full ChatGPT history archive.
-
-Raw excerpts live in:
+Excerpt files live locally under:
 
 ```text
 data/raw/chatgpt/excerpts/
 ```
 
-Each excerpt is one JSON file named `YYYY-MM-DD_NNN.json`, for example `2026-09-02_001.json`.
+An excerpt can stay private or be marked as a possible source for a future weekly report.
 
-Schema version: `chatgpt.excerpt.v1`
+The actual excerpts are private and are not included in this repository.
 
-```json
-{
-  "schema_version": "chatgpt.excerpt.v1",
-  "date": "2026-09-02",
-  "time": "09:30",
-  "title": "RaiLife 睡眠数据更新",
-  "topic": "RaiLife",
-  "status": "private",
-  "user_text": "Your original message, unchanged.",
-  "assistant_text": "The assistant reply, unchanged.",
-  "notes": ""
-}
+## Weekly reports
+
+RaiLife can combine normalized daily data into weekly aggregates and generate data and figures for my weekly reports.
+
+This part of the project is still evolving. Eventually I want the path from daily records to the finished report to require as little repetitive work as possible, while still leaving the writing itself under my control.
+
+## Notion
+
+Some pipelines can write processed information back into my Notion daily records.
+
+For example, activity data can be inserted into the appropriate daily page without replacing the parts I wrote myself. The sync logic is designed so that running it again updates the generated section rather than creating duplicate sections.
+
+Credentials and personal Notion data are never stored in this public repository.
+
+## Project structure
+
+```text
+src/railife/
+├── models/
+├── parsers/
+└── pipelines/
+
+tests/
+data/
 ```
 
-Only two statuses are allowed:
+`models` contains the data structures, `parsers` deal with source formats, and `pipelines` handle the steps that turn source data into useful outputs.
 
-- `private`: private storage only
-- `weekly_candidate`: allowed to enter a future weekly-report candidate pool
+The `data` directory in this repository only contains placeholders. My actual health data, reports, notes, and generated files stay local.
 
-Default status is always `private`. Use `weekly_candidate` only when explicitly marking an excerpt as a weekly-report candidate.
+## Tests
 
-Manual save example:
-
-```sh
-PYTHONPATH=src python3 - <<'PY'
-from pathlib import Path
-from railife.models.chatgpt_excerpt import build_excerpt, save_excerpt
-
-payload = build_excerpt(
-    excerpt_date="2026-09-02",
-    title="RaiLife sleep update",
-    topic="RaiLife",
-    user_text="Paste the original user message here.",
-    assistant_text="Paste the original assistant reply here.",
-)
-
-path = save_excerpt(payload, excerpts_dir=Path("data/raw/chatgpt/excerpts"))
-print(path)
-PY
-```
-
-Run tests:
+The test suite can be run with:
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
+
+## Status
+
+RaiLife is very much a work in progress.
+
+I’m building it around my own routine, so its structure changes whenever I find a better way to record or use something. For now, that is part of the point.
