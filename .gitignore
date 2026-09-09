@@ -1,0 +1,21 @@
+.DS_Store
+
+# Personal / generated data
+data/aggregates/
+data/manifests/
+data/normalized/
+data/reports/
+data/raw/apple_health/
+data/raw/health_auto_export/
+
+# Keep only repository placeholders/examples
+!data/raw/chatgpt/
+!data/raw/chatgpt/excerpts/
+!data/raw/chatgpt/excerpts/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
